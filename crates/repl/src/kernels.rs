@@ -162,6 +162,7 @@ impl Kernel {
     }
 }
 
+#[derive(Clone)]
 pub struct RunningKernel {
     pub process: smol::process::Child,
     _shell_task: Task<Result<()>>,
