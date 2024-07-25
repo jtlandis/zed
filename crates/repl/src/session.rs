@@ -207,102 +207,112 @@ impl Session {
         fs: Arc<dyn Fs>,
         kernel_specification: KernelSpecification,
         cx: &mut ViewContext<Self>,
+        kernel: Option<RunningKernel>,
     ) -> Self {
         let entity_id = editor.entity_id();
         let working_directory = editor
             .upgrade()
             .and_then(|editor| editor.read(cx).working_directory(cx))
             .unwrap_or_else(temp_dir);
-        let kernel = RunningKernel::new(
-            kernel_specification.clone(),
-            entity_id,
-            working_directory,
-            fs.clone(),
-            cx,
-        );
+        if let kernel = Some(kernel) {
+            Kernel::RunningKernel((kernel))
+        } else {
+            RunningKernel::new(
+                kernel_specification.clone(),
+                entity_id,
+                working_directory,
+                fs.clone(),
+                cx,
+            );
 
-        let pending_kernel = cx
-            .spawn(|this, mut cx| async move {
-                let kernel = kernel.await;
+            let pending_kernel = cx
+                .spawn(|this, mut cx| async move {
+                    let kernel = kernel.await;
 
-                match kernel {
-                    Ok((mut kernel, mut messages_rx)) => {
-                        this.update(&mut cx, |this, cx| {
-                            // At this point we can create a new kind of kernel that has the process and our long running background tasks
+                    match kernel {
+                        Ok((mut kernel, mut messages_rx)) => {
+                            this.update(&mut cx, |this, cx| {
+                                // At this point we can create a new kind of kernel that has the process and our long running background tasks
 
-                            let status = kernel.process.status();
-                            this.kernel = Kernel::RunningKernel(kernel);
+                                let status = kernel.process.status();
+                                this.kernel = Kernel::RunningKernel(kernel);
 
-                            cx.spawn(|session, mut cx| async move {
-                                let error_message = match status.await {
-                                    Ok(status) => {
-                                        if status.success() {
-                                            log::info!("kernel process exited successfully");
-                                            return;
+                                cx.spawn(|session, mut cx| async move {
+                                    let error_message = match status.await {
+                                        Ok(status) => {
+                                            if status.success() {
+                                                log::info!("kernel process exited successfully");
+                                                return;
+                                            }
+
+                                            format!(
+                                                "kernel process exited with status: {:?}",
+                                                status
+                                            )
                                         }
+                                        Err(err) => {
+                                            format!("kernel process exited with error: {:?}", err)
+                                        }
+                                    };
 
-                                        format!("kernel process exited with status: {:?}", status)
-                                    }
-                                    Err(err) => {
-                                        format!("kernel process exited with error: {:?}", err)
-                                    }
-                                };
+                                    log::error!("{}", error_message);
 
-                                log::error!("{}", error_message);
-
-                                session
-                                    .update(&mut cx, |session, cx| {
-                                        session.kernel =
-                                            Kernel::ErroredLaunch(error_message.clone());
-
-                                        session.blocks.values().for_each(|block| {
-                                            block.execution_view.update(
-                                                cx,
-                                                |execution_view, cx| {
-                                                    match execution_view.status {
-                                                        ExecutionStatus::Finished => {
-                                                            // Do nothing when the output was good
-                                                        }
-                                                        _ => {
-                                                            // All other cases, set the status to errored
-                                                            execution_view.status =
-                                                                ExecutionStatus::KernelErrored(
-                                                                    error_message.clone(),
-                                                                )
-                                                        }
-                                                    }
-                                                    cx.notify();
-                                                },
-                                            );
-                                        });
-
-                                        cx.notify();
-                                    })
-                                    .ok();
-                            })
-                            .detach();
-
-                            this.messaging_task = cx.spawn(|session, mut cx| async move {
-                                while let Some(message) = messages_rx.next().await {
                                     session
                                         .update(&mut cx, |session, cx| {
-                                            session.route(&message, cx);
+                                            session.kernel =
+                                                Kernel::ErroredLaunch(error_message.clone());
+
+                                            session.blocks.values().for_each(|block| {
+                                                block.execution_view.update(
+                                                    cx,
+                                                    |execution_view, cx| {
+                                                        match execution_view.status {
+                                                            ExecutionStatus::Finished => {
+                                                                // Do nothing when the output was good
+                                                            }
+                                                            _ => {
+                                                                // All other cases, set the status to errored
+                                                                execution_view.status =
+                                                                    ExecutionStatus::KernelErrored(
+                                                                        error_message.clone(),
+                                                                    )
+                                                            }
+                                                        }
+                                                        cx.notify();
+                                                    },
+                                                );
+                                            });
+
+                                            cx.notify();
                                         })
                                         .ok();
-                                }
-                            });
-                        })
-                        .ok();
+                                })
+                                .detach();
+
+                                this.messaging_task = cx.spawn(|session, mut cx| async move {
+                                    while let Some(message) = messages_rx.next().await {
+                                        session
+                                            .update(&mut cx, |session, cx| {
+                                                session.route(&message, cx);
+                                            })
+                                            .ok();
+                                    }
+                                });
+                            })
+                            .ok();
+                        }
+                        Err(err) => {
+                            this.update(&mut cx, |this, _cx| {
+                                this.kernel = Kernel::ErroredLaunch(err.to_string());
+                            })
+                            .ok();
+                        }
                     }
-                    Err(err) => {
-                        this.update(&mut cx, |this, _cx| {
-                            this.kernel = Kernel::ErroredLaunch(err.to_string());
-                        })
-                        .ok();
-                    }
-                }
-            })
-            .shared();
+                })
+                .shared();
+
+            Kernel::StartingKernel(pending_kernel)
+        }
 
         let subscription = match editor.upgrade() {
             Some(editor) => {
@@ -314,7 +324,7 @@ impl Session {
 
         return Self {
             editor,
-            kernel: Kernel::StartingKernel(pending_kernel),
+            kernel,
             messaging_task: Task::ready(()),
             blocks: HashMap::default(),
             kernel_specification,
