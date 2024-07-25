@@ -146,4 +146,15 @@ impl ReplStore {
     pub fn remove_session(&mut self, entity_id: EntityId) {
         self.sessions.remove(&entity_id);
     }
+
+    pub fn get_language_sessions(
+        &self,
+        language: Arc<Language>,
+        cx: &AppContext,
+    ) -> Iter<EntityId, &View<Session>> {
+        let sessions = self.sessions.iter();
+        sessions.filter(|entity_id: EntityId, session: &View<Session>| {
+            session.read(cx).kernel_specification.kernelspec.language == language
+        })
+    }
 }
