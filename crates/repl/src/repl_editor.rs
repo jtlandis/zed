@@ -9,6 +9,7 @@ use gpui::{prelude::*, AppContext, View, WeakView, WindowContext};
 use language::{Language, Point};
 use multi_buffer::MultiBufferRow;
 
+use crate::kernels::RunningKernel;
 use crate::repl_store::ReplStore;
 use crate::session::SessionEvent;
 use crate::{KernelSpecification, Session};
@@ -32,10 +33,26 @@ pub fn run(editor: WeakView<Editor>, cx: &mut WindowContext) -> Result<()> {
     })?;
 
     let fs = store.read(cx).fs().clone();
+    let kernel_per_file = true;
+
     let session = if let Some(session) = store.read(cx).get_session(entity_id).cloned() {
         session
     } else {
-        let session = cx.new_view(|cx| Session::new(editor.clone(), fs, kernel_specification, cx));
+        let kernel: Option<RunningKernel> = if kernel_per_file {
+            None
+        } else {
+            let session = store.read(cx).get_language_session_single(&language, cx)?;
+            match session.read(cx).kernel {
+                Kernel::RunningKernel(kernel) => {
+                    let kernel = kernel.clone();
+                    Some(kernel)
+                }
+                _ => None,
+            }
+        };
+
+        let session =
+            cx.new_view(|cx| Session::new(editor.clone(), fs, kernel_specification, cx, kernel));
 
         editor.update(cx, |_editor, cx| {
             cx.notify();
