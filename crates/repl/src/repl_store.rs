@@ -147,14 +147,27 @@ impl ReplStore {
         self.sessions.remove(&entity_id);
     }
 
-    pub fn get_language_sessions(
+    pub fn get_language_session_single(
         &self,
-        language: Arc<Language>,
+        language: &Language,
         cx: &AppContext,
-    ) -> Iter<EntityId, &View<Session>> {
+    ) -> Result<View<Session>> {
+        //Iter<EntityId, View<Session>>
         let sessions = self.sessions.iter();
-        sessions.filter(|entity_id: EntityId, session: &View<Session>| {
-            session.read(cx).kernel_specification.kernelspec.language == language
-        })
+        sessions.filter(|(_entity_id, session)| {
+            *session.read(cx).kernel_specification.kernelspec.language == language
+        });
+        let session = if let Some((entity_id, session)) = sessions.next() {
+            if let Some((entity_id, session)) = sessions.next() {
+                return (Err(format!(
+                    "expected one session with langauge {}, found multiple",
+                    language
+                )));
+            }
+            session.clone()
+        } else {
+            return (Err(format!("No sessions with language {}", language)));
+        };
+        Ok(session)
     }
 }
