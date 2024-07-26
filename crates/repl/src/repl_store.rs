@@ -151,22 +151,21 @@ impl ReplStore {
         &self,
         language: &Language,
         cx: &AppContext,
-    ) -> Result<View<Session>> {
+    ) -> Result<View<Session>, String> {
         //Iter<EntityId, View<Session>>
-        let sessions = self.sessions.iter();
-        sessions.filter(|(_entity_id, session)| {
-            *session.read(cx).kernel_specification.kernelspec.language == language
+        let mut sessions = self.sessions.iter().filter(|(_entity_id, session)| {
+            *session.read(cx).kernel_specification.kernelspec.language == *language.name()
         });
-        let session = if let Some((entity_id, session)) = sessions.next() {
-            if let Some((entity_id, session)) = sessions.next() {
-                return (Err(format!(
+        let session = if let Some((_entity_id, session)) = sessions.next() {
+            if let Some((_entity_id, _session)) = sessions.next() {
+                return Err(format!(
                     "expected one session with langauge {}, found multiple",
-                    language
-                )));
+                    language.name()
+                ));
             }
             session.clone()
         } else {
-            return (Err(format!("No sessions with language {}", language)));
+            return Err(format!("No sessions with language {}", language.name()));
         };
         Ok(session)
     }
