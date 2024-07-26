@@ -1,6 +1,8 @@
 //! REPL operations on an [`Editor`].
 
+use std::cell::RefCell;
 use std::ops::Range;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -9,7 +11,7 @@ use gpui::{prelude::*, AppContext, View, WeakView, WindowContext};
 use language::{Language, Point};
 use multi_buffer::MultiBufferRow;
 
-use crate::kernels::RunningKernel;
+use crate::kernels::{Kernel, RunningKernel};
 use crate::repl_store::ReplStore;
 use crate::session::SessionEvent;
 use crate::{KernelSpecification, Session};
@@ -33,21 +35,25 @@ pub fn run(editor: WeakView<Editor>, cx: &mut WindowContext) -> Result<()> {
     })?;
 
     let fs = store.read(cx).fs().clone();
-    let kernel_per_file = true;
+    let kernel_per_file = false;
 
     let session = if let Some(session) = store.read(cx).get_session(entity_id).cloned() {
         session
     } else {
-        let kernel: Option<RunningKernel> = if kernel_per_file {
+        let kernel: Option<Rc<RefCell<RunningKernel>>> = if kernel_per_file {
             None
         } else {
-            let session = store.read(cx).get_language_session_single(&language, cx)?;
-            match session.read(cx).kernel {
-                Kernel::RunningKernel(kernel) => {
-                    let kernel = kernel.clone();
-                    Some(kernel)
+            match store.read(cx).get_language_session_single(&language, cx) {
+                Ok(session) => {
+                    match &session.read(cx).kernel {
+                        Kernel::RunningKernel(kernel) => {
+                            //let kernel = kernel.clone();
+                            Some(Rc::clone(&kernel))
+                        }
+                        _ => None,
+                    }
                 }
-                _ => None,
+                Err(_) => None,
             }
         };
 
