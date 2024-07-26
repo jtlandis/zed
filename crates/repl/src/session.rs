@@ -18,13 +18,15 @@ use gpui::{
     WeakView,
 };
 use language::Point;
+use log::debug;
 use project::Fs;
 use runtimelib::{
     ExecuteRequest, ExecutionState, InterruptRequest, JupyterMessage, JupyterMessageContent,
     ShutdownRequest,
 };
 use settings::Settings as _;
-use std::{env::temp_dir, ops::Range, sync::Arc, time::Duration};
+//use std::borrow::BorrowMut;
+use std::{cell::RefCell, env::temp_dir, ops::Range, rc::Rc, sync::Arc, time::Duration};
 use theme::{ActiveTheme, ThemeSettings};
 use ui::{prelude::*, IconButtonShape, Tooltip};
 
@@ -207,17 +209,17 @@ impl Session {
         fs: Arc<dyn Fs>,
         kernel_specification: KernelSpecification,
         cx: &mut ViewContext<Self>,
-        kernel: Option<RunningKernel>,
+        kernel: Option<Rc<RefCell<RunningKernel>>>,
     ) -> Self {
         let entity_id = editor.entity_id();
         let working_directory = editor
             .upgrade()
             .and_then(|editor| editor.read(cx).working_directory(cx))
             .unwrap_or_else(temp_dir);
-        if let kernel = Some(kernel) {
-            Kernel::RunningKernel((kernel))
+        let kernel = if let Some(kernel) = kernel {
+            Kernel::RunningKernel(Rc::clone(&kernel))
         } else {
-            RunningKernel::new(
+            let kernel = RunningKernel::new(
                 kernel_specification.clone(),
                 entity_id,
                 working_directory,
@@ -235,7 +237,8 @@ impl Session {
                                 // At this point we can create a new kind of kernel that has the process and our long running background tasks
 
                                 let status = kernel.process.status();
-                                this.kernel = Kernel::RunningKernel(kernel);
+                                //let kernel_new = ;
+                                this.kernel = Kernel::RunningKernel(Rc::new(RefCell::new(kernel)));
 
                                 cx.spawn(|session, mut cx| async move {
                                     let error_message = match status.await {
@@ -312,7 +315,7 @@ impl Session {
                 .shared();
 
             Kernel::StartingKernel(pending_kernel)
-        }
+        };
 
         let subscription = match editor.upgrade() {
             Some(editor) => {
@@ -363,12 +366,19 @@ impl Session {
         }
     }
 
-    fn send(&mut self, message: JupyterMessage, _cx: &mut ViewContext<Self>) -> anyhow::Result<()> {
-        match &mut self.kernel {
+    fn send(&self, message: JupyterMessage, _cx: &mut ViewContext<Self>) -> anyhow::Result<()> {
+        match &self.kernel {
             Kernel::RunningKernel(kernel) => {
-                kernel.request_tx.try_send(message).ok();
+                log::info!("session .send message arm of RunningKernel.");
+                Rc::clone(kernel)
+                    .borrow_mut()
+                    .request_tx
+                    .try_send(message)
+                    .ok();
             }
-            _ => {}
+            _ => {
+                log::info!("session .send message other arm.")
+            }
         }
 
         anyhow::Ok(())
@@ -532,8 +542,8 @@ impl Session {
         let kernel = std::mem::replace(&mut self.kernel, Kernel::ShuttingDown);
 
         match kernel {
-            Kernel::RunningKernel(mut kernel) => {
-                let mut request_tx = kernel.request_tx.clone();
+            Kernel::RunningKernel(kernel) => {
+                let mut request_tx = Rc::clone(&kernel).borrow().request_tx.clone();
 
                 cx.spawn(|this, mut cx| async move {
                     let message: JupyterMessage = ShutdownRequest { restart: false }.into();
@@ -542,7 +552,7 @@ impl Session {
                     // Give the kernel a bit of time to clean up
                     cx.background_executor().timer(Duration::from_secs(3)).await;
 
-                    kernel.process.kill().ok();
+                    Rc::clone(&kernel).borrow_mut().process.kill().ok();
 
                     this.update(&mut cx, |this, cx| {
                         cx.emit(SessionEvent::Shutdown(this.editor.clone()));
@@ -575,7 +585,8 @@ impl Render for Session {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let (status_text, interrupt_button) = match &self.kernel {
             Kernel::RunningKernel(kernel) => (
-                kernel
+                Rc::clone(&kernel)
+                    .borrow()
                     .kernel_info
                     .as_ref()
                     .map(|info| info.language_info.name.clone()),
@@ -595,10 +606,12 @@ impl Render for Session {
 
         KernelListItem::new(self.kernel_specification.clone())
             .status_color(match &self.kernel {
-                Kernel::RunningKernel(kernel) => match kernel.execution_state {
-                    ExecutionState::Idle => Color::Success,
-                    ExecutionState::Busy => Color::Modified,
-                },
+                Kernel::RunningKernel(kernel) => {
+                    match Rc::clone(&kernel).borrow().execution_state {
+                        ExecutionState::Idle => Color::Success,
+                        ExecutionState::Busy => Color::Modified,
+                    }
+                }
                 Kernel::StartingKernel(_) => Color::Modified,
                 Kernel::ErroredLaunch(_) => Color::Error,
                 Kernel::ShuttingDown => Color::Modified,

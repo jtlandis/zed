@@ -1,3 +1,4 @@
+use std::rc::Rc;
 use std::time::Duration;
 
 use gpui::{percentage, Animation, AnimationExt, AnyElement, Transformation, View};
@@ -308,7 +309,7 @@ fn session_state(session: View<Session>, cx: &WindowContext) -> ReplMenuState {
     };
 
     let menu_state = match &session.kernel {
-        Kernel::RunningKernel(kernel) => match &kernel.execution_state {
+        Kernel::RunningKernel(kernel) => match Rc::clone(&kernel).borrow().execution_state {
             ExecutionState::Idle => ReplMenuState {
                 tooltip: format!("Run code on {} ({})", kernel_name, kernel_language).into(),
                 indicator: Some(Indicator::dot().color(Color::Success)),
