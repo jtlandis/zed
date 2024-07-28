@@ -13,10 +13,12 @@ use runtimelib::{
 };
 use smol::{net::TcpListener, process::Command};
 use std::{
+    cell::RefCell,
     env,
     fmt::Debug,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::PathBuf,
+    rc::Rc,
     sync::Arc,
 };
 
@@ -107,10 +109,14 @@ impl ToString for KernelStatus {
 impl From<&Kernel> for KernelStatus {
     fn from(kernel: &Kernel) -> Self {
         match kernel {
-            Kernel::RunningKernel(kernel) => match kernel.execution_state {
-                ExecutionState::Idle => KernelStatus::Idle,
-                ExecutionState::Busy => KernelStatus::Busy,
-            },
+            Kernel::RunningKernel(kernel) => {
+                /*let kernel_clone = Rc::clone(kernel);
+                let kernel_borrow = kernel_clone.borrow();*/
+                match Rc::clone(kernel).borrow().execution_state {
+                    ExecutionState::Idle => KernelStatus::Idle,
+                    ExecutionState::Busy => KernelStatus::Busy,
+                }
+            }
             Kernel::StartingKernel(_) => KernelStatus::Starting,
             Kernel::ErroredLaunch(_) => KernelStatus::Error,
             Kernel::ShuttingDown => KernelStatus::ShuttingDown,
@@ -121,7 +127,7 @@ impl From<&Kernel> for KernelStatus {
 
 #[derive(Debug)]
 pub enum Kernel {
-    RunningKernel(RunningKernel),
+    RunningKernel(Rc<RefCell<RunningKernel>>),
     StartingKernel(Shared<Task<()>>),
     ErroredLaunch(String),
     ShuttingDown,
@@ -136,7 +142,7 @@ impl Kernel {
     pub fn set_execution_state(&mut self, status: &ExecutionState) {
         match self {
             Kernel::RunningKernel(running_kernel) => {
-                running_kernel.execution_state = status.clone();
+                Rc::clone(running_kernel).borrow_mut().execution_state = status.clone();
             }
             _ => {}
         }
@@ -145,7 +151,7 @@ impl Kernel {
     pub fn set_kernel_info(&mut self, kernel_info: &KernelInfoReply) {
         match self {
             Kernel::RunningKernel(running_kernel) => {
-                running_kernel.kernel_info = Some(kernel_info.clone());
+                Rc::clone(running_kernel).borrow_mut().kernel_info = Some(kernel_info.clone());
             }
             _ => {}
         }
@@ -162,8 +168,9 @@ impl Kernel {
     }
 }
 
+//#[derive(Clone)]
 pub struct RunningKernel {
-    pub process: smol::process::Child,
+    pub process: Option<smol::process::Child>,
     _shell_task: Task<Result<()>>,
     _iopub_task: Task<Result<()>>,
     _control_task: Task<Result<()>>,
@@ -300,7 +307,102 @@ impl RunningKernel {
 
             anyhow::Ok((
                 Self {
-                    process,
+                    process: Some(process),
+                    request_tx,
+                    working_directory,
+                    _shell_task,
+                    _iopub_task,
+                    _control_task,
+                    _routing_task,
+                    connection_path,
+                    execution_state: ExecutionState::Busy,
+                    kernel_info: None,
+                },
+                messages_rx,
+            ))
+        })
+    }
+
+    pub fn from_connection_path(
+        connection_path: PathBuf,
+        working_directory: PathBuf,
+        cx: &mut AppContext,
+    ) -> Task<Result<(Self, JupyterMessageChannel)>> {
+        cx.spawn(|cx| async move {
+            let connection_info = ConnectionInfo::from_path(&connection_path).await?;
+            let mut iopub_socket = connection_info.create_client_iopub_connection("").await?;
+            let mut shell_socket = connection_info.create_client_shell_connection().await?;
+            let mut control_socket = connection_info.create_client_control_connection().await?;
+
+            let (mut iopub, iosub) = futures::channel::mpsc::channel(100);
+
+            let (request_tx, mut request_rx) =
+                futures::channel::mpsc::channel::<JupyterMessage>(100);
+
+            let (mut control_reply_tx, control_reply_rx) = futures::channel::mpsc::channel(100);
+            let (mut shell_reply_tx, shell_reply_rx) = futures::channel::mpsc::channel(100);
+
+            let mut messages_rx = SelectAll::new();
+            messages_rx.push(iosub);
+            messages_rx.push(control_reply_rx);
+            messages_rx.push(shell_reply_rx);
+
+            let _iopub_task = cx.background_executor().spawn({
+                async move {
+                    while let Ok(message) = iopub_socket.read().await {
+                        iopub.send(message).await?;
+                    }
+                    anyhow::Ok(())
+                }
+            });
+
+            let (mut control_request_tx, mut control_request_rx) =
+                futures::channel::mpsc::channel(100);
+            let (mut shell_request_tx, mut shell_request_rx) = futures::channel::mpsc::channel(100);
+
+            let _routing_task = cx.background_executor().spawn({
+                async move {
+                    while let Some(message) = request_rx.next().await {
+                        match message.content {
+                            JupyterMessageContent::DebugRequest(_)
+                            | JupyterMessageContent::InterruptRequest(_)
+                            | JupyterMessageContent::ShutdownRequest(_) => {
+                                control_request_tx.send(message).await?;
+                            }
+                            _ => {
+                                shell_request_tx.send(message).await?;
+                            }
+                        }
+                    }
+                    anyhow::Ok(())
+                }
+            });
+
+            let _shell_task = cx.background_executor().spawn({
+                async move {
+                    while let Some(message) = shell_request_rx.next().await {
+                        shell_socket.send(message).await.ok();
+                        let reply = shell_socket.read().await?;
+                        shell_reply_tx.send(reply).await?;
+                    }
+                    anyhow::Ok(())
+                }
+            });
+
+            let _control_task = cx.background_executor().spawn({
+                async move {
+                    while let Some(message) = control_request_rx.next().await {
+                        control_socket.send(message).await.ok();
+                        let reply = control_socket.read().await?;
+                        control_reply_tx.send(reply).await?;
+                    }
+                    anyhow::Ok(())
+                }
+            });
+
+            anyhow::Ok((
+                Self {
+                    process: None,
                     request_tx,
                     working_directory,
                     _shell_task,
