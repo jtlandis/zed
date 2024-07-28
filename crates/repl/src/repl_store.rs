@@ -146,4 +146,33 @@ impl ReplStore {
     pub fn remove_session(&mut self, entity_id: EntityId) {
         self.sessions.remove(&entity_id);
     }
+
+    pub fn get_language_session_single(
+        &self,
+        language: &Language,
+        cx: &AppContext,
+    ) -> Result<View<Session>, String> {
+        //Iter<EntityId, View<Session>>
+        info!("attempting to compare against {}", language.name());
+        let mut sessions = self.sessions.iter().filter(|(_entity_id, session)| {
+            let passed_lang = language.name();
+            info!(
+                "session lang: {}",
+                session.read(cx).kernel_specification.kernelspec.language
+            );
+            *session.read(cx).kernel_specification.kernelspec.language == *passed_lang
+        });
+        let session = if let Some((_entity_id, session)) = sessions.next() {
+            if let Some((_entity_id, _session)) = sessions.next() {
+                return Err(format!(
+                    "expected one session with langauge {}, found multiple",
+                    language.name()
+                ));
+            }
+            session.clone()
+        } else {
+            return Err(format!("No sessions with language {}", language.name()));
+        };
+        Ok(session)
+    }
 }
