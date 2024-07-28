@@ -224,7 +224,11 @@ impl RunningKernel {
             let connection_path = runtime_dir.join(format!("kernel-zed-{entity_id}.json"));
             let content = serde_json::to_string(&connection_info)?;
             fs.atomic_write(connection_path.clone(), content).await?;
-
+            let lang_str = kernel_specification.kernelspec.language.clone();
+            let store = crate::repl_store::ReplStore::global(cx);
+            store
+                .read(cx)
+                .insert_langauge(lang_str, connection_path.clone());
             let mut cmd = kernel_specification.command(&connection_path)?;
 
             let process = cmd
