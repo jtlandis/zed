@@ -127,7 +127,7 @@ impl From<&Kernel> for KernelStatus {
 
 #[derive(Debug)]
 pub enum Kernel {
-    RunningKernel(Rc<RefCell<RunningKernel>>),
+    RunningKernel(RunningKernel),
     StartingKernel(Shared<Task<()>>),
     ErroredLaunch(String),
     ShuttingDown,
@@ -175,7 +175,7 @@ pub struct RunningKernel {
     _iopub_task: Task<Result<()>>,
     _control_task: Task<Result<()>>,
     _routing_task: Task<Result<()>>,
-    connection_path: PathBuf,
+    pub connection_path: PathBuf,
     pub working_directory: PathBuf,
     pub request_tx: mpsc::Sender<JupyterMessage>,
     pub execution_state: ExecutionState,
@@ -225,10 +225,6 @@ impl RunningKernel {
             let content = serde_json::to_string(&connection_info)?;
             fs.atomic_write(connection_path.clone(), content).await?;
             let lang_str = kernel_specification.kernelspec.language.clone();
-            let store = crate::repl_store::ReplStore::global(cx);
-            store
-                .read(cx)
-                .insert_langauge(lang_str, connection_path.clone());
             let mut cmd = kernel_specification.command(&connection_path)?;
 
             let process = cmd
