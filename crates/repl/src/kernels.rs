@@ -5,7 +5,7 @@ use futures::{
     stream::{self, SelectAll, StreamExt},
     SinkExt as _,
 };
-use gpui::{AppContext, EntityId, Task};
+use gpui::{AppContext, EntityId, Model, Task};
 use project::Fs;
 use runtimelib::{
     dirs, ConnectionInfo, ExecutionState, JupyterKernelspec, JupyterMessage, JupyterMessageContent,
@@ -13,14 +13,13 @@ use runtimelib::{
 };
 use smol::{net::TcpListener, process::Command};
 use std::{
-    cell::RefCell,
     env,
     fmt::Debug,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::PathBuf,
-    rc::Rc,
     sync::Arc,
 };
+use ui::Context;
 
 #[derive(Debug, Clone)]
 pub struct KernelSpecification {
@@ -112,7 +111,7 @@ impl From<&Kernel> for KernelStatus {
             Kernel::RunningKernel(kernel) => {
                 /*let kernel_clone = Rc::clone(kernel);
                 let kernel_borrow = kernel_clone.borrow();*/
-                match Rc::clone(kernel).borrow().execution_state {
+                match kernel.execution_state {
                     ExecutionState::Idle => KernelStatus::Idle,
                     ExecutionState::Busy => KernelStatus::Busy,
                 }
@@ -142,7 +141,7 @@ impl Kernel {
     pub fn set_execution_state(&mut self, status: &ExecutionState) {
         match self {
             Kernel::RunningKernel(running_kernel) => {
-                Rc::clone(running_kernel).borrow_mut().execution_state = status.clone();
+                running_kernel.execution_state = status.clone();
             }
             _ => {}
         }
@@ -151,7 +150,7 @@ impl Kernel {
     pub fn set_kernel_info(&mut self, kernel_info: &KernelInfoReply) {
         match self {
             Kernel::RunningKernel(running_kernel) => {
-                Rc::clone(running_kernel).borrow_mut().kernel_info = Some(kernel_info.clone());
+                running_kernel.kernel_info = Some(kernel_info.clone());
             }
             _ => {}
         }
@@ -168,9 +167,12 @@ impl Kernel {
     }
 }
 
-//#[derive(Clone)]
+pub struct KernelProcess {
+    pub process: smol::process::Child,
+}
+
 pub struct RunningKernel {
-    pub process: Option<smol::process::Child>,
+    pub process: Model<KernelProcess>,
     _shell_task: Task<Result<()>>,
     _iopub_task: Task<Result<()>>,
     _control_task: Task<Result<()>>,
@@ -200,7 +202,7 @@ impl RunningKernel {
         fs: Arc<dyn Fs>,
         cx: &mut AppContext,
     ) -> Task<Result<(Self, JupyterMessageChannel)>> {
-        cx.spawn(|cx| async move {
+        cx.spawn(|mut cx| async move {
             let ip = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
             let ports = peek_ports(ip).await?;
 
@@ -224,7 +226,7 @@ impl RunningKernel {
             let connection_path = runtime_dir.join(format!("kernel-zed-{entity_id}.json"));
             let content = serde_json::to_string(&connection_info)?;
             fs.atomic_write(connection_path.clone(), content).await?;
-            let lang_str = kernel_specification.kernelspec.language.clone();
+            let _lang_str = kernel_specification.kernelspec.language.clone();
             let mut cmd = kernel_specification.command(&connection_path)?;
 
             let process = cmd
@@ -305,9 +307,10 @@ impl RunningKernel {
                 }
             });
 
+            let process = cx.new_model(|_cx| KernelProcess { process })?;
             anyhow::Ok((
                 Self {
-                    process: Some(process),
+                    process,
                     request_tx,
                     working_directory,
                     _shell_task,
@@ -326,6 +329,7 @@ impl RunningKernel {
     pub fn from_connection_path(
         connection_path: PathBuf,
         working_directory: PathBuf,
+        process: Model<KernelProcess>,
         cx: &mut AppContext,
     ) -> Task<Result<(Self, JupyterMessageChannel)>> {
         cx.spawn(|cx| async move {
@@ -402,7 +406,7 @@ impl RunningKernel {
 
             anyhow::Ok((
                 Self {
-                    process: None,
+                    process,
                     request_tx,
                     working_directory,
                     _shell_task,

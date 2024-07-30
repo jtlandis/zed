@@ -22,7 +22,7 @@ pub struct ReplStore {
     fs: Arc<dyn Fs>,
     enabled: bool,
     sessions: HashMap<EntityId, View<Session>>,
-    kernel_files: HashMap<Language, PathBuf>,
+    kernel_files: HashMap<String, PathBuf>,
     kernel_specifications: Vec<KernelSpecification>,
     _subscriptions: Vec<Subscription>,
 }
@@ -146,7 +146,7 @@ impl ReplStore {
         self.sessions.insert(entity_id, session);
     }
 
-    pub fn insert_langauge(&mut self, language: Language, file_path: PathBuf) {
+    pub fn insert_langauge(&mut self, language: String, file_path: PathBuf) {
         self.kernel_files.insert(language, file_path);
     }
 
@@ -154,8 +154,11 @@ impl ReplStore {
         self.sessions.remove(&entity_id);
     }
 
-    pub fn get_language_session(&self, language: &Language) -> Option<&PathBuf> {
-        self.kernel_files.get(&language)
+    pub fn get_language_session(&self, language: String) -> Option<PathBuf> {
+        match self.kernel_files.get(&language) {
+            Some(path) => Some(path.clone()),
+            None => None,
+        }
     }
 
     pub fn get_language_session_single(
