@@ -1,4 +1,5 @@
 use crate::components::KernelListItem;
+use crate::kernels::KernelProcess;
 use crate::{
     kernels::{Kernel, KernelSpecification, RunningKernel},
     outputs::{ExecutionStatus, ExecutionView, LineHeight as _},
@@ -207,6 +208,7 @@ impl Session {
         editor: WeakView<Editor>,
         fs: Arc<dyn Fs>,
         kernel_specification: KernelSpecification,
+        current_kernel: Option<(PathBuf, Model<KernelProcess>)>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let entity_id = editor.entity_id();
@@ -214,7 +216,12 @@ impl Session {
             .upgrade()
             .and_then(|editor| editor.read(cx).working_directory(cx))
             .unwrap_or_else(temp_dir);
-        let kernel = RunningKernel::new(
+        let kernel = if let Some((buffer_path, process)) = current_kernel {
+            RunningKernel::from_connection_path(buffer_path, working_directory, process, cx)
+        } else {
+        };
+
+        RunningKernel::new(
             kernel_specification.clone(),
             entity_id,
             working_directory,
