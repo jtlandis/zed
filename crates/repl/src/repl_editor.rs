@@ -37,7 +37,7 @@ pub fn run(editor: WeakView<Editor>, cx: &mut WindowContext) -> Result<()> {
         .language
         .clone()
         .to_lowercase();
-    //let con_file = store.update(cx, |store, _cx| store.get_language_session(lang));
+    let con_file = store.update(cx, |store, _cx| store.get_language_session(lang));
     let session = if let Some(session) = store.read(cx).get_session(entity_id).cloned() {
         session
     } else {

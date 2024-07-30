@@ -11,7 +11,7 @@ use language::Language;
 use project::Fs;
 use settings::{Settings, SettingsStore};
 
-use crate::kernels::kernel_specifications;
+use crate::kernels::{kernel_specifications, KernelProcess};
 use crate::{JupyterSettings, KernelSpecification, Session};
 
 struct GlobalReplStore(Model<ReplStore>);
@@ -22,7 +22,7 @@ pub struct ReplStore {
     fs: Arc<dyn Fs>,
     enabled: bool,
     sessions: HashMap<EntityId, View<Session>>,
-    kernel_files: HashMap<String, PathBuf>,
+    kernels: HashMap<String, Model<KernelProcess>>,
     kernel_specifications: Vec<KernelSpecification>,
     _subscriptions: Vec<Subscription>,
 }
@@ -53,7 +53,7 @@ impl ReplStore {
             fs,
             enabled: JupyterSettings::enabled(cx),
             sessions: HashMap::default(),
-            kernel_files: HashMap::default(),
+            kernels: HashMap::default(),
             kernel_specifications: Vec::new(),
             _subscriptions: subscriptions,
         };
