@@ -567,7 +567,6 @@ impl Session {
 
 pub enum SessionEvent {
     Shutdown(WeakView<Editor>),
-    //KernelStarted(PathBuf),
 }
 
 impl EventEmitter<SessionEvent> for Session {}
