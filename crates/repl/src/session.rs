@@ -544,15 +544,6 @@ impl Session {
                     // Give the kernel a bit of time to clean up
                     cx.background_executor().timer(Duration::from_secs(3)).await;
 
-                    let _ = kernel
-                        .process
-                        .update(&mut cx, |kernel_proc, _cx| kernel_proc.process.kill().ok());
-                    /*match kernel.process {
-                    Some(mut child) => child.kill().ok(),
-                    None => Some(()),
-                    };*/
-                    //kernel.process.kill().ok();
-
                     this.update(&mut cx, |this, cx| {
                         cx.emit(SessionEvent::Shutdown(this.editor.clone()));
                         this.clear_outputs(cx);

@@ -428,15 +428,12 @@ impl RunningKernel {
 
 impl Drop for RunningKernel {
     fn drop(&mut self) {
-        //std::fs::remove_file(&self.connection_path).ok();
-        log::error!("Dropping running kernel asociated with an editor");
         self.request_tx.close_channel();
     }
 }
 
 impl Drop for KernelProcess {
     fn drop(&mut self) {
-        log::error!("Dropping kernel Process");
         std::fs::remove_file(&self.connection_path).ok();
         self.process.kill().ok();
     }
