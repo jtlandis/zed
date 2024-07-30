@@ -1,5 +1,3 @@
-use core::fmt;
-//use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -160,29 +158,19 @@ impl ReplStore {
     }
     }*/
 
-    pub fn get_language_kernel_single(
-        &self,
-        language: &Language,
-        cx: &AppContext,
-    ) -> std::result::Result<Model<KernelProcess>, SingleKernelError> {
-        //Iter<EntityId, View<Session>>
-        //info!("attempting to compare against {}", language.name());
+    pub fn get_language_kernel_single(&self, language: &Language, cx: &AppContext) -> SingleKernel {
+        let lang = language.name().to_lowercase();
         let mut kernels = self
             .sessions
             .iter()
             .map(|(_entity_id, session)| {
-                let passed_lang = language.name();
-                /*info!(
-                "session lang: {}",
-                session.read(cx).kernel_specification.kernelspec.language
-                );*/
                 let s_ref = session.read(cx);
                 let res = s_ref
                     .kernel_specification
                     .kernelspec
                     .language
                     .to_lowercase()
-                    == passed_lang.to_lowercase();
+                    == lang;
                 let kernel = match &s_ref.kernel {
                     crate::Kernel::RunningKernel(kernel) => Some(kernel.process.clone()),
                     _ => None,
@@ -195,22 +183,22 @@ impl ReplStore {
             .into_iter();
         let kernel = if let Some(kernel_proc) = kernels.next() {
             if let Some(_) = kernels.next() {
-                return Err(SingleKernelError::Multiple(language.name().clone()));
+                return SingleKernel::ErrorMultiple;
             }
             kernel_proc.clone()
         } else {
-            return Err(SingleKernelError::None(language.name().clone()));
+            return SingleKernel::ErrorNone;
         };
-        Ok(kernel)
+        SingleKernel::Single(kernel)
     }
 }
 
-#[derive(Debug, Clone)]
-pub enum SingleKernelError {
-    Multiple(Arc<str>),
-    None(Arc<str>),
+pub enum SingleKernel {
+    Single(Model<KernelProcess>),
+    ErrorMultiple,
+    ErrorNone,
 }
-
+/*
 impl std::error::Error for SingleKernelError {}
 
 impl fmt::Display for SingleKernelError {
@@ -229,3 +217,4 @@ impl fmt::Display for SingleKernelError {
         }
     }
 }
+*/

@@ -25,7 +25,7 @@ use runtimelib::{
     ShutdownRequest,
 };
 use settings::Settings as _;
-use std::path::PathBuf;
+//use std::path::PathBuf;
 use std::{env::temp_dir, ops::Range, sync::Arc, time::Duration};
 use theme::{ActiveTheme, ThemeSettings};
 use ui::{prelude::*, IconButtonShape, Tooltip};
@@ -576,7 +576,7 @@ impl Session {
 
 pub enum SessionEvent {
     Shutdown(WeakView<Editor>),
-    KernelStarted(PathBuf),
+    //KernelStarted(PathBuf),
 }
 
 impl EventEmitter<SessionEvent> for Session {}

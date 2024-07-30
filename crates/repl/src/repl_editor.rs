@@ -9,7 +9,7 @@ use gpui::{prelude::*, AppContext, View, WeakView, WindowContext};
 use language::{Language, Point};
 use multi_buffer::MultiBufferRow;
 
-use crate::repl_store::{ReplStore, SingleKernelError};
+use crate::repl_store::{ReplStore, SingleKernel};
 use crate::session::SessionEvent;
 use crate::{KernelSpecification, Session};
 
@@ -32,12 +32,6 @@ pub fn run(editor: WeakView<Editor>, cx: &mut WindowContext) -> Result<()> {
     })?;
 
     let fs = store.read(cx).fs().clone();
-    let _lang = kernel_specification
-        .kernelspec
-        .language
-        .clone()
-        .to_lowercase();
-    //let con_file = store.update(cx, |store, _cx| store.get_language_session(lang));
     let kernel_per_file = false;
 
     let session = if let Some(session) = store.read(cx).get_session(entity_id).cloned() {
@@ -47,11 +41,14 @@ pub fn run(editor: WeakView<Editor>, cx: &mut WindowContext) -> Result<()> {
             None
         } else {
             match store.read(cx).get_language_kernel_single(&language, cx) {
-                Ok(kernel) => Some(kernel),
-                Err(err) => match &err {
-                    SingleKernelError::Multiple(_) => return Err(anyhow!(err)),
-                    SingleKernelError::None(_) => None,
-                },
+                SingleKernel::Single(kernel) => Some(kernel.clone()),
+                SingleKernel::ErrorNone => None,
+                SingleKernel::ErrorMultiple => {
+                    return Err(anyhow!(format!(
+                        "Expected 1 running kernel for language {}, found multiple",
+                        language.name()
+                    )))
+                }
             }
         };
         let session =
@@ -74,20 +71,6 @@ pub fn run(editor: WeakView<Editor>, cx: &mut WindowContext) -> Result<()> {
             .detach();
         })?;
         store.update(cx, |store, _cx| {
-            /*cx.subscribe(&session, |store, session, event, cx| match event {
-                SessionEvent::KernelStarted(file_path) => {
-                    let lang = session
-                        .read(cx)
-                        .kernel_specification
-                        .kernelspec
-                        .language
-                        .clone()
-                        .to_lowercase();
-                    store.insert_langauge(lang, file_path.clone())
-                }
-                _ => {}
-            })
-            .detach();*/
             store.insert_session(entity_id, session.clone());
         });
 
