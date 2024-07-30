@@ -1,12 +1,11 @@
-use std::path::PathBuf;
+use core::fmt;
+//use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Result;
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use command_palette_hooks::CommandPaletteFilter;
-use gpui::{
-    prelude::*, AppContext, EntityId, Global, Model, ModelContext, Subscription, Task, View,
-};
+use gpui::{AppContext, Context, EntityId, Global, Model, ModelContext, Subscription, Task, View};
 use language::Language;
 use project::Fs;
 use settings::{Settings, SettingsStore};
@@ -22,7 +21,7 @@ pub struct ReplStore {
     fs: Arc<dyn Fs>,
     enabled: bool,
     sessions: HashMap<EntityId, View<Session>>,
-    kernels: HashMap<String, Model<KernelProcess>>,
+    // kernels: HashMap<String, Model<KernelProcess>>,
     kernel_specifications: Vec<KernelSpecification>,
     _subscriptions: Vec<Subscription>,
 }
@@ -53,7 +52,7 @@ impl ReplStore {
             fs,
             enabled: JupyterSettings::enabled(cx),
             sessions: HashMap::default(),
-            kernels: HashMap::default(),
+            //kernels: HashMap::default(),
             kernel_specifications: Vec::new(),
             _subscriptions: subscriptions,
         };
@@ -146,47 +145,87 @@ impl ReplStore {
         self.sessions.insert(entity_id, session);
     }
 
-    pub fn insert_langauge(&mut self, language: String, file_path: PathBuf) {
-        self.kernel_files.insert(language, file_path);
-    }
+    /*pub fn insert_langauge(&mut self, language: String, file_path: PathBuf) {
+    self.kernel_files.insert(language, file_path);
+    }*/
 
     pub fn remove_session(&mut self, entity_id: EntityId) {
         self.sessions.remove(&entity_id);
     }
 
-    pub fn get_language_session(&self, language: String) -> Option<PathBuf> {
-        match self.kernel_files.get(&language) {
-            Some(path) => Some(path.clone()),
-            None => None,
-        }
+    /*pub fn get_language_session(&self, language: String) -> Option<PathBuf> {
+    match self.kernel_files.get(&language) {
+        Some(path) => Some(path.clone()),
+        None => None,
     }
+    }*/
 
-    pub fn get_language_session_single(
+    pub fn get_language_kernel_single(
         &self,
         language: &Language,
         cx: &AppContext,
-    ) -> Result<View<Session>, String> {
+    ) -> std::result::Result<Model<KernelProcess>, SingleKernelError> {
         //Iter<EntityId, View<Session>>
         //info!("attempting to compare against {}", language.name());
-        let mut sessions = self.sessions.iter().filter(|(_entity_id, session)| {
-            let passed_lang = language.name();
-            /*info!(
-            "session lang: {}",
-            session.read(cx).kernel_specification.kernelspec.language
-            );*/
-            *session.read(cx).kernel_specification.kernelspec.language == *passed_lang
-        });
-        let session = if let Some((_entity_id, session)) = sessions.next() {
-            if let Some((_entity_id, _session)) = sessions.next() {
-                return Err(format!(
-                    "expected one session with langauge {}, found multiple",
-                    language.name()
-                ));
+        let mut kernels = self
+            .sessions
+            .iter()
+            .map(|(_entity_id, session)| {
+                let passed_lang = language.name();
+                /*info!(
+                "session lang: {}",
+                session.read(cx).kernel_specification.kernelspec.language
+                );*/
+                let s_ref = session.read(cx);
+                let res = s_ref
+                    .kernel_specification
+                    .kernelspec
+                    .language
+                    .to_lowercase()
+                    == passed_lang.to_lowercase();
+                let kernel = match &s_ref.kernel {
+                    crate::Kernel::RunningKernel(kernel) => Some(kernel.process.clone()),
+                    _ => None,
+                };
+                (res, kernel)
+            })
+            .filter(|(x, y)| x & y.is_some())
+            .map(|(_, x)| x.unwrap())
+            .collect::<HashSet<_>>()
+            .into_iter();
+        let kernel = if let Some(kernel_proc) = kernels.next() {
+            if let Some(_) = kernels.next() {
+                return Err(SingleKernelError::Multiple(language.name().clone()));
             }
-            session.clone()
+            kernel_proc.clone()
         } else {
-            return Err(format!("No sessions with language {}", language.name()));
+            return Err(SingleKernelError::None(language.name().clone()));
         };
-        Ok(session)
+        Ok(kernel)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum SingleKernelError {
+    Multiple(Arc<str>),
+    None(Arc<str>),
+}
+
+impl std::error::Error for SingleKernelError {}
+
+impl fmt::Display for SingleKernelError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match &self {
+            SingleKernelError::Multiple(language) => write!(
+                f,
+                "Expected one Kernel for language {}, found multiple",
+                language
+            ),
+            SingleKernelError::None(language) => write!(
+                f,
+                "Expected one Kernel for language {}, found none",
+                language
+            ),
+        }
     }
 }

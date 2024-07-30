@@ -3,13 +3,13 @@
 use std::ops::Range;
 use std::sync::Arc;
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use editor::{Anchor, Editor, RangeToAnchorExt};
 use gpui::{prelude::*, AppContext, View, WeakView, WindowContext};
 use language::{Language, Point};
 use multi_buffer::MultiBufferRow;
 
-use crate::repl_store::ReplStore;
+use crate::repl_store::{ReplStore, SingleKernelError};
 use crate::session::SessionEvent;
 use crate::{KernelSpecification, Session};
 
@@ -32,16 +32,30 @@ pub fn run(editor: WeakView<Editor>, cx: &mut WindowContext) -> Result<()> {
     })?;
 
     let fs = store.read(cx).fs().clone();
-    let lang = kernel_specification
+    let _lang = kernel_specification
         .kernelspec
         .language
         .clone()
         .to_lowercase();
-    let con_file = store.update(cx, |store, _cx| store.get_language_session(lang));
+    //let con_file = store.update(cx, |store, _cx| store.get_language_session(lang));
+    let kernel_per_file = false;
+
     let session = if let Some(session) = store.read(cx).get_session(entity_id).cloned() {
         session
     } else {
-        let session = cx.new_view(|cx| Session::new(editor.clone(), fs, kernel_specification, cx));
+        let kernel = if kernel_per_file {
+            None
+        } else {
+            match store.read(cx).get_language_kernel_single(&language, cx) {
+                Ok(kernel) => Some(kernel),
+                Err(err) => match &err {
+                    SingleKernelError::Multiple(_) => return Err(anyhow!(err)),
+                    SingleKernelError::None(_) => None,
+                },
+            }
+        };
+        let session =
+            cx.new_view(|cx| Session::new(editor.clone(), fs, kernel_specification, kernel, cx));
 
         editor.update(cx, |_editor, cx| {
             cx.notify();
@@ -59,8 +73,8 @@ pub fn run(editor: WeakView<Editor>, cx: &mut WindowContext) -> Result<()> {
             })
             .detach();
         })?;
-        store.update(cx, |store, cx| {
-            cx.subscribe(&session, |store, session, event, cx| match event {
+        store.update(cx, |store, _cx| {
+            /*cx.subscribe(&session, |store, session, event, cx| match event {
                 SessionEvent::KernelStarted(file_path) => {
                     let lang = session
                         .read(cx)
@@ -73,7 +87,7 @@ pub fn run(editor: WeakView<Editor>, cx: &mut WindowContext) -> Result<()> {
                 }
                 _ => {}
             })
-            .detach();
+            .detach();*/
             store.insert_session(entity_id, session.clone());
         });
 

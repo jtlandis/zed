@@ -217,17 +217,16 @@ impl Session {
             .and_then(|editor| editor.read(cx).working_directory(cx))
             .unwrap_or_else(temp_dir);
         let kernel = if let Some(current_kernel) = current_kernel {
-            RunningKernel::from_process(current_kernel, working_directory, cx);
+            RunningKernel::from_process(current_kernel, working_directory, cx)
         } else {
+            RunningKernel::new(
+                kernel_specification.clone(),
+                entity_id,
+                working_directory,
+                fs.clone(),
+                cx,
+            )
         };
-
-        RunningKernel::new(
-            kernel_specification.clone(),
-            entity_id,
-            working_directory,
-            fs.clone(),
-            cx,
-        );
 
         let pending_kernel = cx
             .spawn(|this, mut cx| async move {
@@ -237,10 +236,12 @@ impl Session {
                     Ok((kernel, mut messages_rx)) => {
                         this.update(&mut cx, |this, cx| {
                             // At this point we can create a new kind of kernel that has the process and our long running background tasks
-                            let status =
-                                kernel.process.update(cx, |proc, _cx| proc.process.status());
+                            log::info!("Attempting to watch process status");
+                            let (status, _con_path) = kernel.process.update(cx, |proc, _cx| {
+                                (proc.process.status(), proc.connection_path.clone())
+                            });
                             //emit an event to notify itself?
-                            cx.emit(SessionEvent::KernelStarted(kernel.connection_path.clone()));
+                            //cx.emit(SessionEvent::KernelStarted(con_path));
 
                             this.kernel = Kernel::RunningKernel(kernel);
 
