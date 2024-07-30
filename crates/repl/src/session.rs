@@ -208,7 +208,7 @@ impl Session {
         editor: WeakView<Editor>,
         fs: Arc<dyn Fs>,
         kernel_specification: KernelSpecification,
-        current_kernel: Option<(PathBuf, Model<KernelProcess>)>,
+        current_kernel: Option<Model<KernelProcess>>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let entity_id = editor.entity_id();
@@ -216,8 +216,8 @@ impl Session {
             .upgrade()
             .and_then(|editor| editor.read(cx).working_directory(cx))
             .unwrap_or_else(temp_dir);
-        let kernel = if let Some((buffer_path, process)) = current_kernel {
-            RunningKernel::from_connection_path(buffer_path, working_directory, process, cx)
+        let kernel = if let Some(current_kernel) = current_kernel {
+            RunningKernel::from_process(current_kernel, working_directory, cx);
         } else {
         };
 

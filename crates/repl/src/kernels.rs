@@ -169,6 +169,7 @@ impl Kernel {
 
 pub struct KernelProcess {
     pub process: smol::process::Child,
+    pub connection_path: PathBuf,
 }
 
 pub struct RunningKernel {
@@ -177,7 +178,7 @@ pub struct RunningKernel {
     _iopub_task: Task<Result<()>>,
     _control_task: Task<Result<()>>,
     _routing_task: Task<Result<()>>,
-    pub connection_path: PathBuf,
+    //pub connection_path: PathBuf,
     pub working_directory: PathBuf,
     pub request_tx: mpsc::Sender<JupyterMessage>,
     pub execution_state: ExecutionState,
@@ -226,7 +227,6 @@ impl RunningKernel {
             let connection_path = runtime_dir.join(format!("kernel-zed-{entity_id}.json"));
             let content = serde_json::to_string(&connection_info)?;
             fs.atomic_write(connection_path.clone(), content).await?;
-            let _lang_str = kernel_specification.kernelspec.language.clone();
             let mut cmd = kernel_specification.command(&connection_path)?;
 
             let process = cmd
@@ -307,7 +307,10 @@ impl RunningKernel {
                 }
             });
 
-            let process = cx.new_model(|_cx| KernelProcess { process })?;
+            let process = cx.new_model(|_cx| KernelProcess {
+                process,
+                connection_path,
+            })?;
             anyhow::Ok((
                 Self {
                     process,
@@ -317,7 +320,7 @@ impl RunningKernel {
                     _iopub_task,
                     _control_task,
                     _routing_task,
-                    connection_path,
+                    //connection_path,
                     execution_state: ExecutionState::Busy,
                     kernel_info: None,
                 },
@@ -326,12 +329,12 @@ impl RunningKernel {
         })
     }
 
-    pub fn from_connection_path(
-        connection_path: PathBuf,
-        working_directory: PathBuf,
+    pub fn from_process(
         process: Model<KernelProcess>,
+        working_directory: PathBuf,
         cx: &mut AppContext,
     ) -> Task<Result<(Self, JupyterMessageChannel)>> {
+        let connection_path = process.update(cx, |proc, _cx| proc.connection_path.clone());
         cx.spawn(|cx| async move {
             let connection_info = ConnectionInfo::from_path(&connection_path).await?;
             let mut iopub_socket = connection_info.create_client_iopub_connection("").await?;
@@ -413,7 +416,7 @@ impl RunningKernel {
                     _iopub_task,
                     _control_task,
                     _routing_task,
-                    connection_path,
+                    //connection_path,
                     execution_state: ExecutionState::Busy,
                     kernel_info: None,
                 },
@@ -425,9 +428,16 @@ impl RunningKernel {
 
 impl Drop for RunningKernel {
     fn drop(&mut self) {
-        std::fs::remove_file(&self.connection_path).ok();
+        //std::fs::remove_file(&self.connection_path).ok();
 
         self.request_tx.close_channel();
+    }
+}
+
+impl Drop for KernelProcess {
+    fn drop(&mut self) {
+        std::fs::remove_file(&self.connection_path).ok();
+        self.process.kill().ok();
     }
 }
 
