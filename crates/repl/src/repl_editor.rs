@@ -9,7 +9,6 @@ use gpui::{prelude::*, AppContext, View, WeakView, WindowContext};
 use language::{Language, Point};
 use multi_buffer::MultiBufferRow;
 
-use crate::kernels::{Kernel, RunningKernel};
 use crate::repl_store::ReplStore;
 use crate::session::SessionEvent;
 use crate::{KernelSpecification, Session};
@@ -33,7 +32,12 @@ pub fn run(editor: WeakView<Editor>, cx: &mut WindowContext) -> Result<()> {
     })?;
 
     let fs = store.read(cx).fs().clone();
-    let con_file = store.read(cx).get_language_session(&language);
+    let lang = kernel_specification
+        .kernelspec
+        .language
+        .clone()
+        .to_lowercase();
+    //let con_file = store.update(cx, |store, _cx| store.get_language_session(lang));
     let session = if let Some(session) = store.read(cx).get_session(entity_id).cloned() {
         session
     } else {
@@ -50,15 +54,22 @@ pub fn run(editor: WeakView<Editor>, cx: &mut WindowContext) -> Result<()> {
                             store.remove_session(shutdown_event.entity_id());
                         });
                     }
+                    _ => {}
                 }
             })
             .detach();
         })?;
-
         store.update(cx, |store, cx| {
-            cx.subscribe(&session, |store, _emitter, event, _cx| match event {
+            cx.subscribe(&session, |store, session, event, cx| match event {
                 SessionEvent::KernelStarted(file_path) => {
-                    store.insert_langauge(language, file_path)
+                    let lang = session
+                        .read(cx)
+                        .kernel_specification
+                        .kernelspec
+                        .language
+                        .clone()
+                        .to_lowercase();
+                    store.insert_langauge(lang, file_path.clone())
                 }
                 _ => {}
             })

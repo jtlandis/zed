@@ -24,6 +24,7 @@ use runtimelib::{
     ShutdownRequest,
 };
 use settings::Settings as _;
+use std::path::PathBuf;
 use std::{env::temp_dir, ops::Range, sync::Arc, time::Duration};
 use theme::{ActiveTheme, ThemeSettings};
 use ui::{prelude::*, IconButtonShape, Tooltip};
@@ -226,11 +227,14 @@ impl Session {
                 let kernel = kernel.await;
 
                 match kernel {
-                    Ok((mut kernel, mut messages_rx)) => {
+                    Ok((kernel, mut messages_rx)) => {
                         this.update(&mut cx, |this, cx| {
                             // At this point we can create a new kind of kernel that has the process and our long running background tasks
+                            let status =
+                                kernel.process.update(cx, |proc, _cx| proc.process.status());
+                            //emit an event to notify itself?
+                            cx.emit(SessionEvent::KernelStarted(kernel.connection_path.clone()));
 
-                            let status = kernel.process.status();
                             this.kernel = Kernel::RunningKernel(kernel);
 
                             cx.spawn(|session, mut cx| async move {
@@ -522,7 +526,7 @@ impl Session {
         let kernel = std::mem::replace(&mut self.kernel, Kernel::ShuttingDown);
 
         match kernel {
-            Kernel::RunningKernel(mut kernel) => {
+            Kernel::RunningKernel(kernel) => {
                 let mut request_tx = kernel.request_tx.clone();
 
                 cx.spawn(|this, mut cx| async move {
@@ -532,7 +536,14 @@ impl Session {
                     // Give the kernel a bit of time to clean up
                     cx.background_executor().timer(Duration::from_secs(3)).await;
 
-                    kernel.process.kill().ok();
+                    let _ = kernel
+                        .process
+                        .update(&mut cx, |kernel_proc, _cx| kernel_proc.process.kill().ok());
+                    /*match kernel.process {
+                    Some(mut child) => child.kill().ok(),
+                    None => Some(()),
+                    };*/
+                    //kernel.process.kill().ok();
 
                     this.update(&mut cx, |this, cx| {
                         cx.emit(SessionEvent::Shutdown(this.editor.clone()));
@@ -557,6 +568,7 @@ impl Session {
 
 pub enum SessionEvent {
     Shutdown(WeakView<Editor>),
+    KernelStarted(PathBuf),
 }
 
 impl EventEmitter<SessionEvent> for Session {}
